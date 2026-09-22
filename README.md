@@ -168,7 +168,7 @@ python3 ~/Documents/prompt-optimizer/bin/aggregate_team.py out/*.json --open
 
 ## Project layout
 
-```
+```text
 bin/analyze.py              CLI entry point (period parsing, orchestration)
 bin/aggregate_team.py       Anonymized team/aggregate report from exported JSON files
 lib/backends.py              Reads + normalizes Copilot CLI / Claude Code history into sessions/turns
@@ -320,10 +320,10 @@ required), each turn $k$ contributes a 2D step:
 
 The path is the cumulative sum $\left(x_k, y_k\right) = \left(\sum_{i\le k}
 \Delta x_i, \sum_{i \le k} \Delta y_i\right)$, and the **centroid**
-$(\bar{x}, \bar{y})$ is its mean. Let $\theta_k = \operatorname{atan2}(y_k
-- \bar{y}, x_k - \bar{x})$ be the angle from the centroid to point $k$
-(points coincident with the centroid are dropped, since angle is
-undefined there; at least 3 valid points are required).
+$(\bar{x}, \bar{y})$ is its mean. Let $\theta_k =
+\operatorname{atan2}(y_k - \bar{y}, x_k - \bar{x})$ be the angle from the
+centroid to point $k$ (points coincident with the centroid are dropped,
+since angle is undefined there; at least 3 valid points are required).
 
 **Winding number.** The discrete winding number is the total signed
 turning angle around the centroid, divided by $2\pi$:
@@ -436,7 +436,6 @@ A low $R^2$ would mean the power-law model is a poor fit for your data
 (vocabulary growth is noisy/irregular rather than smoothly sub-linear); a
 $\beta$ well below the typical band suggests unusually repetitive,
 templated language relative to corpus length.
-
 
 ### A.6 Covariance-shrinkage Mahalanobis distance to the optimal point
 
