@@ -1,0 +1,87 @@
+# prompt-optimizer configuration
+#
+# Every threshold, weight, and sample-size cutoff used by the scoring,
+# objective-tracking, advanced-metrics, and anomaly-detection engines lives
+# here instead of being hardcoded in the Python modules. This file is parsed
+# by lib/config.py (a small dependency-free subset-of-YAML parser, since this
+# tool intentionally has zero third-party dependencies). If this file is
+# missing, deleted, or fails to parse, every module falls back to the exact
+# defaults shown below, so the tool never breaks because of a bad edit here.
+
+scoring:
+  specificity:
+    vague_weight: 0.55
+    length_weight: 0.45
+    ideal_length_min: 6
+    ideal_length_max: 60
+  structure:
+    verb_weight: 0.40
+    acceptance_weight: 0.35
+    multi_ask_weight: 0.25
+  efficiency:
+    correction_weight: 0.50
+    clarification_weight: 0.25
+    restatement_weight: 0.25
+
+# Direction ("lower" or "higher" is better) and a "healthy" reference value
+# used to judge whether a tracked objective has been achieved, independent of
+# whatever threshold originally triggered the recommendation.
+objective_thresholds:
+  vague_rate:
+    direction: lower
+    healthy: 0.08
+  file_ref_rate:
+    direction: higher
+    healthy: 0.55
+  correction_rate:
+    direction: lower
+    healthy: 0.08
+  acceptance_rate:
+    direction: higher
+    healthy: 0.35
+  multi_ask_rate:
+    direction: lower
+    healthy: 0.20
+  clarification_rate:
+    direction: lower
+    healthy: 0.10
+  context_restatement_rate:
+    direction: lower
+    healthy: 0.08
+  single_shot_rate:
+    direction: higher
+    healthy: 0.55
+  avg_word_count:
+    direction: higher
+    healthy: 6.0
+
+# Relative-change bands used to classify an objective as improving/regressed
+# rather than achieved/no_change (see lib/history.py).
+objective_improvement_band_pct: 5.0
+
+advanced_metrics:
+  markov_min_transitions: 20
+  winding_min_turns: 4
+  winding_circular_threshold: 0.75
+  burstiness_min_timestamps: 10
+  compression_min_bytes: 200
+  heaps_min_tokens: 200
+  heaps_min_samples: 5
+  heaps_sample_base: 50
+  heaps_sample_ratio: 1.35
+  heaps_sample_points: 24
+
+anomaly_detection:
+  min_history_runs: 4
+  z_score_watch_threshold: 1.0
+  z_score_flag_threshold: 1.75
+
+mahalanobis:
+  min_history_runs: 5
+  # Shrinkage intensity alpha in [0,1] blending the raw sample covariance
+  # toward a scaled-identity target; see lib/mahalanobis.py for the formula.
+  ridge_epsilon: 0.25
+
+team_mode:
+  anonymize_labels: true
+  min_users_for_aggregate: 2
