@@ -313,7 +313,7 @@ centroid," so it's repurposed here as a discrete diagnostic.
 **Embedding.** For a session with turns $1, \dots, n$ ( $n \ge 4$
 required), each turn $k$ contributes a 2D step:
 
-- $\Delta x_k = \operatorname{sign}(\text{words}_k - \text{words}_{k-1})$
+- $\Delta x_k = \mathrm{sign}(\text{words}_k - \text{words}_{k-1})$
   — did the reply/turn expand or contract relative to the previous one.
 - $\Delta y_k = +1$ if turn $k$ carries a correction signal, $-1$ if it
   carries an acceptance/resolution signal, $0$ otherwise.
@@ -321,16 +321,16 @@ required), each turn $k$ contributes a 2D step:
 The path is the cumulative sum $\left(x_k, y_k\right) = \left(\sum_{i\le k}
 \Delta x_i, \sum_{i \le k} \Delta y_i\right)$, and the **centroid**
 $(\bar{x}, \bar{y})$ is its mean. Let $\theta_k =
-\operatorname{atan2}(y_k - \bar{y}, x_k - \bar{x})$ be the angle from the
+\mathrm{atan2}(y_k - \bar{y}, x_k - \bar{x})$ be the angle from the
 centroid to point $k$ (points coincident with the centroid are dropped,
 since angle is undefined there; at least 3 valid points are required).
 
 **Winding number.** The discrete winding number is the total signed
 turning angle around the centroid, divided by $2\pi$:
 
-$$W = \frac{1}{2\pi} \sum_{k} \operatorname{wrap}(\theta_{k+1} - \theta_k)$$
+$$W = \frac{1}{2\pi} \sum_{k} \mathrm{wrap}(\theta_{k+1} - \theta_k)$$
 
-where $\operatorname{wrap}(\cdot)$ maps an angle difference into
+where $\mathrm{wrap}(\cdot)$ maps an angle difference into
 $(-\pi, \pi]$ before summing (implemented in `_wrap_angle()`) — this is
 exactly the standard discrete definition of the winding number of a closed
 polygonal path around an interior point (see e.g. do Carmo, *Differential
@@ -464,7 +464,7 @@ toward a scaled identity matrix, with shrinkage intensity $\alpha \in
 [0, 1]$ (`mahalanobis.ridge_epsilon` in `config.yaml`, default $0.25$):
 
 $$\Sigma_{\text{reg}} = (1 - \alpha)\, \Sigma_{\text{sample}} + \alpha\,
-\bar{\sigma}^2 I, \qquad \bar{\sigma}^2 = \frac{\operatorname{tr}(
+\bar{\sigma}^2 I, \qquad \bar{\sigma}^2 = \frac{\mathrm{tr}(
 \Sigma_{\text{sample}})}{4}$$
 
 This blends the sample covariance with an isotropic (axis-independent)
