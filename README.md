@@ -1,4 +1,4 @@
-# prompt-optimizer
+# promptimizer - A prompt optimizer
 
 A local, **agent-agnostic** tool that analyzes your own prompt history from
 GitHub Copilot CLI and/or Claude Code and produces a multi-tab HTML report
