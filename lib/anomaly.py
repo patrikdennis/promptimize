@@ -33,6 +33,7 @@ from config import load_config
 TRACKED_METRICS = [
     ("vague_rate", "Vague-language rate", "higher_is_bad"),
     ("file_ref_rate", "File/code reference rate", "lower_is_bad"),
+    ("rationale_rate", "Rationale (why-context) rate", "lower_is_bad"),
     ("correction_rate", "Correction rate", "higher_is_bad"),
     ("acceptance_rate", "Acceptance-criteria rate", "lower_is_bad"),
     ("multi_ask_rate", "Multi-ask (bundled requests) rate", "higher_is_bad"),

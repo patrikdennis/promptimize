@@ -31,14 +31,32 @@ from config import load_config
 # ---------------------------------------------------------------------------
 
 VAGUE_PATTERNS = [
-    r"\bsomething\b", r"\bsomehow\b", r"\bmaybe\b", r"\bkind of\b", r"\bi guess\b",
+    r"\bsomething\b", r"\bsomehow\b", r"\bkind of\b",
     r"\bfix it\b", r"\bmake it work\b", r"\betc\.?\b", r"\bwhatever\b", r"\bstuff\b",
-    r"\bi don'?t know\b", r"\bnot sure\b", r"\bsome sort of\b", r"\bi think\b",
+    r"\bi don'?t know\b", r"\bsome sort of\b",
+]
+# Tentative/hedging phrasing ("I think", "maybe", "not sure"). Per Anthropic's
+# own prompting guidance, vagueness is a missing-information problem, not a
+# tentative-wording one -- "I think the bug is in auth.py:42" is a perfectly
+# specific report despite the hedge. These patterns only count toward
+# vague_hits when the turn also lacks a concrete anchor (see
+# `_has_concrete_anchor` and METRIC_DEFINITIONS["vague_rate"]).
+HEDGE_PATTERNS = [
+    r"\bmaybe\b", r"\bi think\b", r"\bnot sure\b", r"\bi guess\b",
+]
+# Phrases that explain *why* a change is wanted, not just *what* is wanted.
+# This is the "add context" principle from Anthropic's prompting guidance
+# (motivation/rationale), which is distinct from -- and previously entirely
+# missing from -- the file/code-reference artifact-grounding signal below.
+RATIONALE_PATTERNS = [
+    r"\bbecause\b", r"\bso that\b", r"\bin order to\b", r"\bto (prevent|avoid|ensure)\b",
+    r"\bthe reason is\b", r"\bthis is because\b", r"\bgiven that\b",
 ]
 CORRECTION_PATTERNS = [
-    r"\bthat'?s wrong\b", r"\bnot what i\b", r"\bdoesn'?t work\b", r"\bstill (broken|not working)\b",
-    r"\btry again\b", r"\bactually i meant\b", r"\bno,? (that|this|you)\b", r"\brevert\b",
-    r"\bundo\b", r"\bwrong\b", r"\bincorrect\b",
+    r"\bthat'?s wrong\b", r"\bthat'?s incorrect\b", r"\bthis is incorrect\b",
+    r"\bnot what i\b", r"\bdoesn'?t work\b", r"\bstill (broken|not working)\b",
+    r"\btry again\b", r"\bactually i meant\b", r"\bno,? (that|this|you)\b",
+    r"\brevert (that|this|it|your)\b", r"\bundo (that|this|it|your)\b",
 ]
 ACTION_VERBS = [
     "implement", "fix", "add", "create", "refactor", "write", "build", "debug",
@@ -48,6 +66,15 @@ ACTION_VERBS = [
 ]
 FILE_REF_RE = re.compile(
     r"(@[\w./-]+|`[^`\s]+`|\b[\w./-]+\.(py|js|ts|tsx|jsx|go|rb|java|rs|md|json|yaml|yml|sql|html|css)\b)",
+    re.I,
+)
+# A "concrete detail" anchor other than a file/code reference: a line number
+# (":42" or "line 42"), an issue/PR number ("#123" or "ABC-123"), or a
+# commit-hash-like hex token -- the kind of specific identifier that makes a
+# hedge like "I think..." a report rather than an underspecified guess. A
+# bare number is deliberately not enough ("maybe add 10 tests" is still vague).
+CONCRETE_DETAIL_RE = re.compile(
+    r":\d+\b|\bline\s+\d+\b|#\d+\b|\b[A-Z][A-Z0-9]+-\d+\b|\b[0-9a-f]{6,40}\b",
     re.I,
 )
 ACCEPTANCE_PATTERNS = [
@@ -62,6 +89,10 @@ CLARIFICATION_PATTERNS = [
     r"\bto clarify\b", r"\bbefore i proceed\b", r"\bjust to confirm\b",
     r"\ba few (questions|things) (first|before)\b",
 ]
+# 2+ list items (numbered or bulleted) on separate lines -- the doc's
+# "provide instructions as sequential steps" recommendation. Requiring 2+
+# matches excludes a single stray leading dash from counting as a real list.
+STRUCTURED_STEP_RE = re.compile(r"(?:^|\n)[ \t]*(?:\d{1,2}[\.\)]|[-*])[ \t]+\S")
 STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for", "with",
     "is", "are", "was", "were", "be", "been", "it", "this", "that", "as", "at",
@@ -72,6 +103,8 @@ STOPWORDS = {
 }
 
 _vague_re = re.compile("|".join(VAGUE_PATTERNS), re.I)
+_hedge_re = re.compile("|".join(HEDGE_PATTERNS), re.I)
+_rationale_re = re.compile("|".join(RATIONALE_PATTERNS), re.I)
 _correction_re = re.compile("|".join(CORRECTION_PATTERNS), re.I)
 _acceptance_re = re.compile("|".join(ACCEPTANCE_PATTERNS), re.I)
 _verb_re = re.compile(r"\b(" + "|".join(ACTION_VERBS) + r")\b", re.I)
@@ -88,19 +121,27 @@ CLARIFICATION_MAX_WORDS = 60
 METRIC_DEFINITIONS: dict[str, dict] = {
     "vague_rate": {
         "label": "Vague-language rate",
-        "formula": "count(turns matching a vague-language pattern) / total turns",
+        "formula": "count(turns matching a vague-language pattern, or an unanchored hedge) / total turns",
         "detail": (
-            "A turn is flagged if it matches one of 13 patterns associated with "
-            "underspecified requests: hedges (\"maybe\", \"I guess\", \"kind of\"), "
-            "catch-alls (\"fix it\", \"make it work\", \"etc\"), or explicit "
-            "uncertainty (\"not sure\", \"I don't know\"). Lower is better."
+            "A turn is flagged if it matches one of 10 catch-all/avoidant patterns "
+            "(\"something\", \"fix it\", \"make it work\", \"etc\", \"I don't know\"), "
+            "which are always counted, or one of 4 hedge patterns (\"maybe\", \"I "
+            "think\", \"not sure\", \"I guess\"), which are counted only when the "
+            "turn has no concrete anchor -- no file/code reference and no line "
+            "number, issue number, ticket ID, or hash. A hedge "
+            "paired with an anchor (\"I think the bug is in auth.py:42\") is a "
+            "tentative report, not vagueness, per Anthropic's own guidance that "
+            "vagueness is a missing-information problem, not a tentative-wording "
+            "one. Lower is better."
         ),
         "why_it_matters": (
             "An LLM resolves ambiguity by sampling the most probable interpretation "
             "of underspecified language from its training distribution, not by asking "
             "you what you meant unless explicitly prompted to. Vague phrasing "
             "increases the chance the resolved interpretation diverges from your "
-            "actual intent, which surfaces later as a correction turn."
+            "actual intent, which surfaces later as a correction turn. Tentative "
+            "wording attached to a specific detail does not carry this risk, so it "
+            "is not penalized."
         ),
     },
     "file_ref_rate": {
@@ -109,7 +150,8 @@ METRIC_DEFINITIONS: dict[str, dict] = {
         "detail": (
             "A turn is flagged if it contains an @mention, a backtick-quoted "
             "token, or a bare path/filename with a recognized extension. Higher "
-            "is better."
+            "is better. This measures grounding in a concrete artifact, and is one "
+            "of two components of the Context axis alongside rationale_rate below."
         ),
         "why_it_matters": (
             "Naming an exact file, symbol, or snippet removes an entire search/"
@@ -119,13 +161,39 @@ METRIC_DEFINITIONS: dict[str, dict] = {
             "a reduction in required inference steps, not a matter of politeness."
         ),
     },
+    "rationale_rate": {
+        "label": "Rationale rate",
+        "formula": "count(turns matching a rationale-giving pattern) / total turns",
+        "detail": (
+            "A turn is flagged if it contains a because/so-that/in-order-to "
+            "style clause explaining *why* a change is wanted, not just what the "
+            "change is. This is the other component of the Context axis, and "
+            "directly operationalizes Anthropic's \"add context to improve "
+            "performance\" principle: explaining the motivation behind an "
+            "instruction lets the model generalize correctly to cases the literal "
+            "instruction didn't cover. Higher is better."
+        ),
+        "why_it_matters": (
+            "Anthropic's own prompting guidance gives this exact contrast: telling "
+            "a model \"never use ellipses\" is less effective than \"never use "
+            "ellipses, because your response will be read aloud by a text-to-speech "
+            "engine\" -- the reason lets the model correctly generalize to related "
+            "cases the literal rule didn't spell out. A file reference alone tells "
+            "the agent *where*; a rationale tells it *why*, which is a distinct and "
+            "equally important kind of context."
+        ),
+    },
     "correction_rate": {
         "label": "Correction rate",
         "formula": "count(turns matching a correction/redo pattern) / total turns",
         "detail": (
             "A turn is flagged if it matches patterns such as \"that's wrong\", "
-            "\"still broken\", \"try again\", \"revert\", \"undo\", or \"not what "
-            "I asked\". This is the closest available proxy for rework caused by "
+            "\"still broken\", \"try again\", \"revert that/this/it/your\", \"undo "
+            "that/this/it/your\", or \"not what I asked\". Bare \"revert\", \"undo\", "
+            "\"wrong\", and \"incorrect\" are deliberately excluded: they misfire on "
+            "plain, non-corrective instructions (\"revert commit abc123\", \"wrong "
+            "file\") that reference something other than the assistant's own prior "
+            "output. This is the closest available proxy for rework caused by "
             "a prior turn being misunderstood or under-specified. Lower is better."
         ),
         "why_it_matters": (
@@ -258,14 +326,23 @@ class TurnFeatures:
     has_file_ref: bool
     has_code_ref: bool
     vague_hits: int
+    rationale_signal: bool
     correction_signal: bool
     acceptance_signal: bool
     action_verb_hits: int
     is_question: bool
-    starts_with_verb: bool
+    has_structured_steps: bool
     context_restatement: bool
     restatement_eligible: bool
     clarification_signal: bool
+
+
+def _has_concrete_anchor(text: str, has_file_ref: bool, has_code_ref: bool) -> bool:
+    """True if the turn is grounded in something specific enough that a
+    hedge ("I think...") is a tentative report rather than a vague guess --
+    a file/code reference, or a line number / issue number / hash / other
+    2+ digit identifier."""
+    return has_file_ref or has_code_ref or bool(CONCRETE_DETAIL_RE.search(text))
 
 
 def extract_turn_features(turn: Turn, session: Session, prev_turn: Turn | None) -> TurnFeatures:
@@ -273,7 +350,8 @@ def extract_turn_features(turn: Turn, session: Session, prev_turn: Turn | None) 
     words = re.findall(r"\S+", text)
     word_count = len(words)
     file_refs = FILE_REF_RE.findall(text)
-    first_word = words[0].lower().strip(".,:;!?") if words else ""
+    has_file_ref = bool(file_refs)
+    has_code_ref = "`" in text or "```" in text
 
     restatement_eligible = prev_turn is not None
     context_restatement = False
@@ -284,18 +362,24 @@ def extract_turn_features(turn: Turn, session: Session, prev_turn: Turn | None) 
             jaccard = len(cur_words & prev_words) / len(cur_words | prev_words)
             context_restatement = jaccard >= CONTEXT_RESTATEMENT_JACCARD_THRESHOLD
 
+    vague_hits = len(_vague_re.findall(text))
+    hedge_hits = len(_hedge_re.findall(text))
+    if not _has_concrete_anchor(text, has_file_ref, has_code_ref):
+        vague_hits += hedge_hits
+
     return TurnFeatures(
         turn=turn,
         session=session,
         word_count=word_count,
-        has_file_ref=bool(file_refs),
-        has_code_ref="`" in text or "```" in text,
-        vague_hits=len(_vague_re.findall(text)),
+        has_file_ref=has_file_ref,
+        has_code_ref=has_code_ref,
+        vague_hits=vague_hits,
+        rationale_signal=bool(_rationale_re.search(text)),
         correction_signal=bool(_correction_re.search(text)),
         acceptance_signal=bool(_acceptance_re.search(text)),
         action_verb_hits=len(_verb_re.findall(text)),
         is_question=text.strip().endswith("?"),
-        starts_with_verb=first_word in ACTION_VERBS,
+        has_structured_steps=len(STRUCTURED_STEP_RE.findall(text)) >= 2,
         context_restatement=context_restatement,
         restatement_eligible=restatement_eligible,
         clarification_signal=_is_clarification(turn.assistant_text),
@@ -354,6 +438,7 @@ class Aggregate:
     avg_word_count: float = 0.0
     vague_rate: float = 0.0
     file_ref_rate: float = 0.0
+    rationale_rate: float = 0.0
     correction_rate: float = 0.0
     acceptance_rate: float = 0.0
     multi_ask_rate: float = 0.0
@@ -410,6 +495,7 @@ def build_aggregate(feats: list[TurnFeatures], sessions: list[Session]) -> Aggre
     agg.avg_word_count = sum(f.word_count for f in feats) / n
     agg.vague_rate, _ = _rate(feats, lambda f: f.vague_hits > 0)
     agg.file_ref_rate, _ = _rate(feats, lambda f: f.has_file_ref or f.has_code_ref)
+    agg.rationale_rate, _ = _rate(feats, lambda f: f.rationale_signal)
     agg.correction_rate, _ = _rate(feats, lambda f: f.correction_signal)
     agg.acceptance_rate, _ = _rate(feats, lambda f: f.acceptance_signal)
     agg.multi_ask_rate, _ = _rate(feats, lambda f: f.action_verb_hits >= 2)
@@ -429,23 +515,27 @@ def build_aggregate(feats: list[TurnFeatures], sessions: list[Session]) -> Aggre
         "correction_by_acceptance": _segment(feats, lambda f: f.acceptance_signal),
         "correction_by_multi_ask": _segment(feats, lambda f: f.action_verb_hits >= 2),
         "clarification_by_file_ref": _segment(feats, lambda f: f.has_file_ref or f.has_code_ref),
+        "correction_by_rationale": _segment(feats, lambda f: f.rationale_signal),
+        "clarification_by_rationale": _segment(feats, lambda f: f.rationale_signal),
         "clarification_by_short": _segment(feats, lambda f: f.word_count <= 5),
     }
 
     # --- Scoring (0-100 per axis) -------------------------------------------
     cfg = load_config()
     sc = cfg["scoring"]
-    spec_cfg, struct_cfg, eff_cfg = sc["specificity"], sc["structure"], sc["efficiency"]
+    spec_cfg, ctx_cfg, struct_cfg, eff_cfg = sc["specificity"], sc["context"], sc["structure"], sc["efficiency"]
 
-    ideal_len_rate = sum(
-        1 for f in feats if spec_cfg["ideal_length_min"] <= f.word_count <= spec_cfg["ideal_length_max"]
-    ) / n
-    specificity = 100 * (spec_cfg["vague_weight"] * (1 - agg.vague_rate) + spec_cfg["length_weight"] * ideal_len_rate)
+    # Length is credited from a floor only -- per Anthropic's own guidance
+    # ("add context... Claude is smart enough to generalize from the
+    # explanation"), a long, well-explained prompt is not penalized. Only
+    # prompts shorter than the minimum lose length credit.
+    sufficient_len_rate = sum(1 for f in feats if f.word_count >= spec_cfg["ideal_length_min"]) / n
+    specificity = 100 * (spec_cfg["vague_weight"] * (1 - agg.vague_rate) + spec_cfg["length_weight"] * sufficient_len_rate)
 
-    context = 100 * agg.file_ref_rate
+    context = 100 * (ctx_cfg["anchor_weight"] * agg.file_ref_rate + ctx_cfg["rationale_weight"] * agg.rationale_rate)
 
     structure = 100 * (
-        struct_cfg["verb_weight"] * (sum(1 for f in feats if f.starts_with_verb or f.action_verb_hits >= 1) / n)
+        struct_cfg["steps_weight"] * (sum(1 for f in feats if f.has_structured_steps) / n)
         + struct_cfg["acceptance_weight"] * agg.acceptance_rate
         + struct_cfg["multi_ask_weight"] * (1 - agg.multi_ask_rate)
     )
@@ -467,6 +557,7 @@ def build_aggregate(feats: list[TurnFeatures], sessions: list[Session]) -> Aggre
     agg.metric_values = {
         "vague_rate": agg.vague_rate,
         "file_ref_rate": agg.file_ref_rate,
+        "rationale_rate": agg.rationale_rate,
         "correction_rate": agg.correction_rate,
         "acceptance_rate": agg.acceptance_rate,
         "multi_ask_rate": agg.multi_ask_rate,

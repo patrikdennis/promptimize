@@ -42,7 +42,7 @@ PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.32.0.min.js"
 AXES = ["specificity", "context", "structure", "efficiency"]
 AXIS_LABELS = {
     "specificity": "Specificity",
-    "context": "Context anchoring",
+    "context": "Context & rationale",
     "structure": "Structure / acceptance criteria",
     "efficiency": "Efficiency",
 }

@@ -15,21 +15,22 @@ from recommendations import Recommendation
 from history import ObjectiveProgress
 from advanced_metrics import AdvancedMetrics, STATES
 from config import load_config
+from skills import SKILL_DEFINITIONS
 
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.32.0.min.js"
 
 AXIS_ORDER = ["specificity", "context", "structure", "efficiency"]
 AXIS_LABEL = {
     "specificity": "Specificity",
-    "context": "Context anchoring",
+    "context": "Context & rationale",
     "structure": "Structure & acceptance criteria",
     "efficiency": "Efficiency (corrections, clarifications, restatement)",
     "overall": "Overall",
 }
 AXIS_FORMULA = {
-    "specificity": "100 x (0.55 x (1 - vague_rate) + 0.45 x share of turns with 6-60 words)",
-    "context": "100 x file_ref_rate",
-    "structure": "100 x (0.4 x share of turns with an action verb + 0.35 x acceptance_rate + 0.25 x (1 - multi_ask_rate))",
+    "specificity": "100 x (0.55 x (1 - vague_rate) + 0.45 x share of turns with at least 6 words)",
+    "context": "100 x (0.65 x file_ref_rate + 0.35 x rationale_rate)",
+    "structure": "100 x (0.4 x share of turns with 2+ numbered/bulleted steps + 0.35 x acceptance_rate + 0.25 x (1 - multi_ask_rate))",
     "efficiency": "100 x (0.5 x (1 - correction_rate) + 0.25 x (1 - clarification_rate) + 0.25 x (1 - context_restatement_rate))",
 }
 
@@ -91,8 +92,15 @@ def render_html(
     adv: AdvancedMetrics,
     anomalies: list | None = None,
     mahalanobis_result=None,
+    skill_progress: dict | None = None,
+    total_level: int | None = None,
+    prompt_level: int | None = None,
+    prompt_level_before: int | None = None,
+    skill_xp_gained: dict | None = None,
 ) -> str:
     anomalies = anomalies or []
+    skill_progress = skill_progress or {}
+    skill_xp_gained = skill_xp_gained or {}
     scores = agg.scores
     radar_axes = AXIS_ORDER
     radar_values = [scores[a] for a in radar_axes] + [scores[radar_axes[0]]]
@@ -176,6 +184,7 @@ def render_html(
     evidence_body = "".join([
         cond_rows("File/code reference", cs.get("correction_by_file_ref", {}), "With reference", "Without reference"),
         cond_rows("Vague language", cs.get("correction_by_vague", {}), "Vague", "Not vague"),
+        cond_rows("Stated rationale (why)", cs.get("correction_by_rationale", {}), "Rationale stated", "No rationale"),
         cond_rows("Stated acceptance criteria", cs.get("correction_by_acceptance", {}), "Stated", "Not stated"),
         cond_rows("2+ action verbs bundled", cs.get("correction_by_multi_ask", {}), "Bundled", "Single-focus"),
     ])
@@ -240,12 +249,45 @@ def render_html(
         delta_overall = scores.get("overall", 0) - previous_run["score_overall"]
         prev_summary += f" Change since then: {delta_overall:+.1f} points."
     else:
-        prev_summary = "This is the first recorded report — no prior run to compare against yet. Run this analysis again later to start tracking progress."
+        prev_summary = "No prior report uses the current scoring model, so there is no comparable baseline yet. Run this analysis again later to start tracking progress."
 
     skills_rows = "".join(
         f"<tr><td>{s['name']}</td><td>{s['location']}</td><td class='detail'>{s['description']}</td></tr>"
         for s in installed_skills
     ) or "<tr><td colspan='3' class='detail'>No personal skills installed yet.</td></tr>"
+
+    def skill_card(key: str) -> str:
+        sp = skill_progress.get(key)
+        if sp is None:
+            return ""
+        gained = skill_xp_gained.get(key, 0.0)
+        gained_html = f'<div class="skill-gained">+{gained:.0f} XP this run</div>' if gained else ""
+        if sp.is_maxed:
+            progress_label = f"MAX LEVEL &mdash; {sp.xp:,.0f} XP total"
+        else:
+            progress_label = f"{sp.xp_into_level:,.0f} / {sp.xp_for_next_level:,.0f} XP to level {sp.level + 1}"
+        return f"""
+        <div class="skill-card{' skill-maxed' if sp.is_maxed else ''}">
+          <div class="skill-head">
+            <span class="skill-level">{sp.level}</span>
+            <span class="skill-name">{sp.label}</span>
+          </div>
+          <div class="skill-bar-track">
+            <div class="skill-bar-fill" style="width:{sp.progress_pct:.1f}%"></div>
+          </div>
+          <div class="skill-progress-label">{progress_label}</div>
+          {gained_html}
+          <div class="skill-desc">{sp.description}</div>
+        </div>
+        """
+
+    skill_cards_html = "".join(skill_card(s["key"]) for s in SKILL_DEFINITIONS)
+    prompt_level_delta = (
+        (prompt_level - prompt_level_before) if (prompt_level is not None and prompt_level_before is not None) else 0
+    )
+    prompt_level_delta_html = (
+        f'<div class="skill-gained">+{prompt_level_delta} this run</div>' if prompt_level_delta > 0 else ""
+    )
 
     def task_item(r: Recommendation, idx: int) -> str:
         return f"""
@@ -508,6 +550,21 @@ def render_html(
 
   .optimal-explainer {{ display:grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
   .optimal-explainer ul {{ margin: 6px 0 0 18px; padding:0; font-size: 13px; line-height: 1.7; color:#d7dbe4;}}
+
+  .level-hero {{ text-align:center; }}
+  .level-hero-num {{ color: var(--accent); font-size: 44px; }}
+  .skill-gained {{ color: var(--accent); font-size: 11.5px; font-weight:700; margin-top: 4px; }}
+  .skill-grid {{ display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 12px; }}
+  .skill-card {{ background:#1c202b; border:1px solid var(--border); border-radius: 10px; padding: 14px 16px; }}
+  .skill-card.skill-maxed {{ border-color: var(--accent); box-shadow: 0 0 0 1px rgba(110,231,183,0.25) inset; }}
+  .skill-head {{ display:flex; align-items:center; gap:10px; margin-bottom: 8px; }}
+  .skill-level {{ flex:0 0 auto; width:32px; height:32px; border-radius:8px; background:#26304a; color:var(--accent2); font-size:14px; font-weight:700; display:flex; align-items:center; justify-content:center; }}
+  .skill-maxed .skill-level {{ background:#1e2a1e; color:var(--accent); }}
+  .skill-name {{ font-size: 14px; font-weight:600; }}
+  .skill-bar-track {{ background:#12141a; border-radius:999px; height:8px; overflow:hidden; }}
+  .skill-bar-fill {{ background: linear-gradient(90deg, var(--accent2), var(--accent)); height:100%; }}
+  .skill-progress-label {{ color: var(--muted); font-size: 11px; margin-top: 6px; font-variant-numeric: tabular-nums; }}
+  .skill-desc {{ color: var(--muted); font-size: 12px; line-height:1.5; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }}
 </style>
 </head>
 <body>
@@ -524,6 +581,7 @@ def render_html(
     <button data-tab="progress">Progress Over Time</button>
     <button data-tab="advanced">Advanced Analytics</button>
     <button data-tab="skills">Skills &amp; Capabilities</button>
+    <button data-tab="leveling">Leveling</button>
     <button data-tab="methodology">Methodology</button>
   </nav>
 
@@ -543,7 +601,7 @@ def render_html(
         <h2>Position vs. the optimal point (3D)</h2>
         <div id="path3d" style="height:520px; width:100%;" data-plotly></div>
         <div class="caption">
-          Axes: Specificity, Context anchoring, Efficiency (see Methodology tab for exact formulas). The gold
+          Axes: Specificity, Context & rationale, Efficiency (see Methodology tab for exact formulas). The gold
           diamond marks the optimal corner (100, 100, 100) &mdash; the point where every underlying rate is at
           its theoretical best (0% vague language, 100% of turns anchored to a file/reference, 0% corrections/
           clarifications/restatement). It is a mathematical ceiling defined by how the metrics are constructed,
@@ -605,7 +663,7 @@ def render_html(
         <div class="panel">
           <h2>Prompt length distribution</h2>
           <div id="lenbuckets" style="height:340px; width:100%;" data-plotly></div>
-          <div class="caption">Turns bucketed by word count. The scoring formula treats 6-60 words as the "ideal" band for the specificity axis: long enough to carry intent and constraints, short enough to stay a single focused ask.</div>
+          <div class="caption">Turns bucketed by word count. The specificity axis gives length credit to any turn with at least 6 words; it deliberately has no upper ceiling, because useful context, rationale, examples, and constraints should not be penalized for making a prompt longer. Long multi-part requests are best made easier to verify with numbered or bulleted steps, rather than shortened arbitrarily.</div>
         </div>
       </div>
       <div class="row2">
@@ -781,6 +839,47 @@ def render_html(
       </div>
     </div>
 
+    <div class="tabpanel" id="tab-leveling">
+      <div class="grid">
+        <div class="card level-hero">
+          <div class="big level-hero-num">{prompt_level if prompt_level is not None else '&mdash;'}</div>
+          <div class="label">Prompt Level (composite, weighted average of the 7 skills below)</div>
+          {prompt_level_delta_html}
+        </div>
+        <div class="card level-hero">
+          <div class="big level-hero-num">{total_level if total_level is not None else '&mdash;'}</div>
+          <div class="label">Total level (sum of all 7 skill levels, max {7 * 99})</div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Skills</h2>
+        <div class="skill-grid">
+          {skill_cards_html}
+        </div>
+        <div class="caption">
+          Each skill's XP accrues permanently across every analysis run &mdash; a turn is only ever counted
+          once (tracked in a local `seen_turns` ledger keyed by session and turn index), so re-running this
+          tool on an overlapping period never double-counts XP. Levels 1&#8211;99 follow the same geometric
+          shape as a classic MMO XP curve (slow grind to reach the highest levels), rescaled so the
+          early/mid levels are reachable within weeks of normal usage. Full formulas, the per-skill XP rules,
+          and the derivation of the level curve are in README Appendix B.
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Hiscores (opt-in, cross-colleague comparison)</h2>
+        <div class="rec-text">
+          This run's JSON export (written alongside the HTML report) now includes your Prompt Level, Total
+          level, and per-skill levels/XP &mdash; nothing else new, and still no raw prompt/reply text. If you
+          and your colleagues each export and share that JSON, <code>bin/hiscores.py</code> merges any number
+          of exports into one ranked table using the exact same deterministic formula for everyone, so levels
+          are genuinely comparable. This is additive to, and independent from, the existing
+          <code>bin/aggregate_team.py</code> team rollup (which aggregates score distributions, weakest axes,
+          and anomaly/Mahalanobis statistics) &mdash; run either or both, on the same or different sets of
+          exports. See README "Hiscores" section for usage.
+        </div>
+      </div>
+    </div>
+
     <div class="tabpanel" id="tab-methodology">
       <div class="panel">
         <h2>Score axis formulas</h2>
@@ -797,6 +896,26 @@ def render_html(
         {metric_defs_html}
       </div>
       <div class="panel">
+        <h2>Cross-agent guidance boundary</h2>
+        <div class="rec-text">
+          The scored defaults retain only prompt practices that overlap in official guidance for both
+          Claude and GitHub Copilot and can be detected reliably from a local transcript: clear
+          requirements, concrete artifact grounding, motivation/rationale, acceptance criteria,
+          structured multi-step work, and validation. The Context &amp; rationale axis deliberately
+          measures both <i>where</i> work belongs (file/code references) and <i>why</i> it matters
+          (because/so-that/in-order-to style context).
+          <br><br>
+          The report deliberately does <b>not</b> score provider- or surface-specific tactics such as
+          Claude XML tags, named roles, hidden-thinking settings, Copilot IDE participants/keywords,
+          or which files happen to be open. Those can be useful in their respective products, but they
+          are neither universal quality signals nor reliably inferable from exported transcript data.
+          Nor does this report award points merely for starting with a verb. See the source guidance:
+          <a href="https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices">Anthropic prompting best practices</a>,
+          <a href="https://docs.github.com/en/copilot/concepts/prompting/prompt-engineering">GitHub Copilot prompt engineering</a>, and
+          <a href="https://docs.github.com/en/copilot/get-started/best-practices">GitHub Copilot best practices</a>.
+        </div>
+      </div>
+      <div class="panel">
         <h2>Evidentiary standard and limitations</h2>
         <div class="rec-text">
           Two kinds of justification are used in this report, and each recommendation states which applies:
@@ -810,9 +929,10 @@ def render_html(
             reasoning about mechanism, not a numeric external citation &mdash; no claim in this report cites an
             external study or benchmark that this tool has not itself computed.</li>
           </ul>
-          All detection (vague language, corrections, acceptance criteria, clarification loops, context
-          restatement) is pattern- and heuristic-based, not a judgment by the agent that produced the analyzed
-          responses. Treat scores as a directional signal for reflection, not a precise measurement.
+          All detection (vague language, artifact/rationale context, structured steps, corrections,
+          acceptance criteria, clarification loops, and context restatement) is pattern- and
+          heuristic-based, not a judgment by the agent that produced the analyzed responses. Treat
+          scores as a directional signal for reflection, not a precise measurement.
         </div>
       </div>
     </div>
@@ -872,7 +992,7 @@ Plotly.newPlot('path3d', [
 ], Object.assign({{}}, dark, {{
   scene: {{
     xaxis: {{ title: 'Specificity', range: [0,100], color:'#9aa3b2', gridcolor: '#2a3040', backgroundcolor: '#14161d' }},
-    yaxis: {{ title: 'Context anchoring', range: [0,100], color:'#9aa3b2', gridcolor: '#2a3040', backgroundcolor: '#14161d' }},
+    yaxis: {{ title: 'Context & rationale', range: [0,100], color:'#9aa3b2', gridcolor: '#2a3040', backgroundcolor: '#14161d' }},
     zaxis: {{ title: 'Efficiency', range: [0,100], color:'#9aa3b2', gridcolor: '#2a3040', backgroundcolor: '#14161d' }},
     bgcolor: '#171a21',
     camera: {{ eye: {{ x: 1.5, y: 1.5, z: 1.1 }} }}

@@ -13,9 +13,18 @@ scoring:
     vague_weight: 0.55
     length_weight: 0.45
     ideal_length_min: 6
-    ideal_length_max: 60
+    # This is a floor, not a ceiling: prompts earn length credit from 6
+    # words onward. A longer prompt is not penalized merely for including
+    # useful context, rationale, examples, or constraints.
+  context:
+    # Concrete artifact grounding (where) and motivation/rationale (why) are
+    # complementary forms of context. See lib/metrics.py for the detectors.
+    anchor_weight: 0.65
+    rationale_weight: 0.35
   structure:
-    verb_weight: 0.40
+    # Structured multi-step instructions, not action-verb presence. Starting
+    # with "fix", "add", or "implement" is intentionally not scored.
+    steps_weight: 0.40
     acceptance_weight: 0.35
     multi_ask_weight: 0.25
   efficiency:
@@ -33,6 +42,9 @@ objective_thresholds:
   file_ref_rate:
     direction: higher
     healthy: 0.55
+  rationale_rate:
+    direction: higher
+    healthy: 0.25
   correction_rate:
     direction: lower
     healthy: 0.08
@@ -85,3 +97,32 @@ mahalanobis:
 team_mode:
   anonymize_labels: true
   min_users_for_aggregate: 2
+
+# "Leveling" tab: a classic MMO-style skill/XP/level layer over the same
+# per-turn signals used elsewhere. See lib/skills.py and README Appendix B
+# for the full derivation of the XP curve and per-skill XP rules.
+skills:
+  xp_per_qualifying_turn: 10
+  vocabulary_xp_per_new_word: 2
+  vocabulary_xp_cap_per_turn: 20
+  xp_curve:
+    # Same functional shape as a classic MMO XP table
+    # (floor(n + base * 2**(n/growth_divisor)) per level step, summed), but
+    # scale_divisor is ~75x larger than that reference curve's constant 4, compressing total
+    # XP-to-99 from ~13.03M down to ~173.8k -- reachable by a dedicated
+    # personal user over a realistic multi-year timeframe instead of
+    # requiring that reference curve's grind scale, while keeping the same "fast early
+    # levels, steep late levels" shape. See Appendix B.
+    base: 300
+    growth_divisor: 7
+    scale_divisor: 300
+  # Weights for the single composite "Prompt Level" (weighted average of
+  # skill levels, analogous to a combat level). Must sum to 1.0.
+  prompt_level_weights:
+    specificity: 0.20
+    context_anchoring: 0.20
+    structure_acceptance: 0.15
+    efficiency: 0.20
+    clarity: 0.10
+    context_retention: 0.10
+    vocabulary: 0.05

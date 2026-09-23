@@ -28,12 +28,24 @@ def test_empty_input_gives_zero_scores():
     assert agg.scores == {"specificity": 0, "context": 0, "structure": 0, "efficiency": 0, "overall": 0}
 
 
-def test_specific_file_referenced_prompt_scores_high_context():
+def test_file_reference_earns_artifact_component_of_context_score():
     sessions = [_mk_session("copilot", "s1", ["fix the bug in `src/app.py` handling null users please make sure tests still pass"])]
     feats = extract_all_features(sessions)
     agg = build_aggregate(feats, sessions)
-    assert agg.scores["context"] == 100.0
+    assert agg.scores["context"] == 65.0
     assert agg.metric_values["file_ref_rate"] == 1.0
+
+
+def test_rationale_earns_motivation_component_of_context_score():
+    sessions = [_mk_session(
+        "copilot", "s1",
+        ["update `src/app.py` because the current null handling blocks new users from signing in"],
+    )]
+    feats = extract_all_features(sessions)
+    agg = build_aggregate(feats, sessions)
+    assert agg.metric_values["file_ref_rate"] == 1.0
+    assert agg.metric_values["rationale_rate"] == 1.0
+    assert agg.scores["context"] == 100.0
 
 
 def test_vague_prompt_scores_low_specificity():
@@ -42,6 +54,37 @@ def test_vague_prompt_scores_low_specificity():
     agg = build_aggregate(feats, sessions)
     assert agg.metric_values["vague_rate"] == 1.0
     assert agg.scores["specificity"] < 50
+
+
+def test_anchored_hedge_is_not_treated_as_vague():
+    sessions = [_mk_session("copilot", "s1", ["I think the bug is in auth.py:42; please inspect that branch."])]
+    feats = extract_all_features(sessions)
+    agg = build_aggregate(feats, sessions)
+    assert feats[0].vague_hits == 0
+    assert agg.metric_values["vague_rate"] == 0.0
+
+
+def test_unanchored_hedge_is_treated_as_vague():
+    sessions = [_mk_session("copilot", "s1", ["Maybe the login flow needs improvement."])]
+    feats = extract_all_features(sessions)
+    agg = build_aggregate(feats, sessions)
+    assert feats[0].vague_hits > 0
+    assert agg.metric_values["vague_rate"] == 1.0
+
+
+def test_bare_number_does_not_turn_an_unanchored_hedge_into_specificity():
+    sessions = [_mk_session("copilot", "s1", ["Maybe add 10 tests for the login flow."])]
+    feats = extract_all_features(sessions)
+    assert feats[0].vague_hits > 0
+
+
+def test_long_well_specified_prompt_is_not_penalized_for_length():
+    text = "Please update `src/app.py` " + "with useful implementation context " * 40
+    sessions = [_mk_session("copilot", "s1", [text])]
+    feats = extract_all_features(sessions)
+    agg = build_aggregate(feats, sessions)
+    assert feats[0].word_count > 60
+    assert agg.scores["specificity"] == 100.0
 
 
 def test_correction_turn_lowers_efficiency():
@@ -61,6 +104,22 @@ def test_correction_turn_lowers_efficiency():
     assert agg_bad.scores["efficiency"] < agg_clean.scores["efficiency"]
 
 
+def test_revert_commit_instruction_is_not_a_correction():
+    sessions = [_mk_session("copilot", "s1", ["revert commit abc123 because it introduced a regression"])]
+    feats = extract_all_features(sessions)
+    agg = build_aggregate(feats, sessions)
+    assert feats[0].correction_signal is False
+    assert agg.correction_rate == 0.0
+
+
+def test_explicit_revert_of_prior_response_is_a_correction():
+    sessions = [_mk_session("copilot", "s1", ["revert that change; it breaks the public API"])]
+    feats = extract_all_features(sessions)
+    agg = build_aggregate(feats, sessions)
+    assert feats[0].correction_signal is True
+    assert agg.correction_rate == 1.0
+
+
 def test_single_shot_rate_counts_one_turn_sessions():
     sessions = [
         _mk_session("copilot", "s1", ["only turn"]),
@@ -76,6 +135,16 @@ def test_multi_ask_detected_with_two_plus_action_verbs():
     feats = extract_all_features(sessions)
     agg = build_aggregate(feats, sessions)
     assert agg.metric_values["multi_ask_rate"] == 1.0
+
+
+def test_structured_steps_raise_structure_without_action_verb_heuristic():
+    sessions = [_mk_session("copilot", "s1", [
+        "Please handle this carefully:\n1. Inspect the current behavior.\n2. Describe the safest option.",
+    ])]
+    feats = extract_all_features(sessions)
+    agg = build_aggregate(feats, sessions)
+    assert feats[0].has_structured_steps is True
+    assert agg.scores["structure"] == 65.0
 
 
 def test_context_restatement_detected_across_similar_consecutive_turns():

@@ -33,6 +33,8 @@ from anomaly import compute_anomalies  # noqa: E402
 from mahalanobis import compute_mahalanobis_to_optimal  # noqa: E402
 from export import write_run_exports, build_export_payload  # noqa: E402
 import history  # noqa: E402
+import skills  # noqa: E402
+from config import load_config  # noqa: E402
 
 DEFAULT_COPILOT_DB = Path.home() / ".copilot" / "session-store.db"
 DEFAULT_CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
@@ -156,6 +158,19 @@ def main() -> int:
         )
 
     run_history = [dict(r) for r in history.get_run_history(con)]
+
+    # --- Leveling: award XP for turns not yet recorded in seen_turns, then
+    # derive current levels for the report and the (opt-in) Hiscores export.
+    skill_xp_before = history.get_skill_xp_totals(con)
+    skill_xp_totals, skill_xp_gained = history.award_skill_xp_for_new_turns(con, feats)
+    cfg = load_config()
+    skill_progress = skills.build_skill_progress(skill_xp_totals, cfg)
+    total_level = skills.compute_total_level(skill_progress)
+    prompt_level = skills.compute_prompt_level(skill_progress, cfg)
+    prompt_level_before = skills.compute_prompt_level(
+        skills.build_skill_progress(skill_xp_before, cfg), cfg
+    )
+
     con.close()
 
     html = render_html(
@@ -172,6 +187,11 @@ def main() -> int:
         adv=adv,
         anomalies=anomalies,
         mahalanobis_result=mahalanobis_result,
+        skill_progress=skill_progress,
+        total_level=total_level,
+        prompt_level=prompt_level,
+        prompt_level_before=prompt_level_before,
+        skill_xp_gained=skill_xp_gained,
     )
 
     if args.out:
@@ -195,6 +215,9 @@ def main() -> int:
         mahalanobis_result=mahalanobis_result,
         run_id=run_id,
         generated_at=now.isoformat(),
+        skill_progress=skill_progress,
+        total_level=total_level,
+        prompt_level=prompt_level,
     )
     json_path, csv_path = write_run_exports(out_path.with_suffix(""), export_payload)
 

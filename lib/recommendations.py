@@ -160,8 +160,10 @@ def build_recommendations(agg: Aggregate, installed_skills: list[dict]) -> list[
             priority=1,
             evidence=(
                 f"{agg.vague_rate:.0%} of your {n_total} analyzed turns (n={round(agg.vague_rate*n_total)}) "
-                "contain at least one of 13 tracked hedge/vague-language patterns "
-                "(\"maybe\", \"something\", \"fix it\", \"I guess\", \"not sure\", etc.)."
+                "contain at least one of 10 tracked catch-all/avoidant patterns "
+                "(\"something\", \"fix it\", \"I don't know\", etc.), or a hedge "
+                "(\"maybe\", \"I think\", \"not sure\", \"I guess\") with no file/code "
+                "reference or specific identifier to anchor it."
                 + (f" Segmented comparison: {ev}." if ev else "")
             ),
             mechanism=(
@@ -181,7 +183,7 @@ def build_recommendations(agg: Aggregate, installed_skills: list[dict]) -> list[
         ))
 
     # ------------------------------------------------------------------
-    # 2. File / context anchoring
+    # 2. File / artifact grounding
     # ------------------------------------------------------------------
     if agg.file_ref_rate < 0.45:
         ev = _segment_sentence(cs.get("correction_by_file_ref", {}), "correction_rate",
@@ -221,7 +223,49 @@ def build_recommendations(agg: Aggregate, installed_skills: list[dict]) -> list[
         ))
 
     # ------------------------------------------------------------------
-    # 3. Correction / rework rate
+    # 3. Motivation / rationale context
+    # ------------------------------------------------------------------
+    if agg.rationale_rate < 0.25:
+        ev = _segment_sentence(cs.get("correction_by_rationale", {}), "correction_rate",
+                               "correction rate when a rationale is present", "correction rate without a rationale")
+        ev2 = _segment_sentence(cs.get("clarification_by_rationale", {}), "clarification_rate",
+                                "clarification-loop rate when a rationale is present", "without a rationale")
+        evidence_parts = [
+            f"Only {agg.rationale_rate:.0%} of your turns state why the requested change matters "
+            "(detected through because/so-that/in-order-to style clauses)."
+        ]
+        if ev:
+            evidence_parts.append(f"Segmented correction rate: {ev}.")
+        if ev2:
+            evidence_parts.append(f"Segmented clarification rate: {ev2}.")
+        recs.append(Recommendation(
+            id="state-rationale",
+            title="Add the reason behind instructions when it changes the implementation",
+            axis="context",
+            metric_key="rationale_rate",
+            current_value=agg.rationale_rate,
+            target_value=0.25,
+            impact=min(25, (0.25 - agg.rationale_rate) * 100),
+            priority=2,
+            evidence=" ".join(evidence_parts),
+            mechanism=(
+                "A concrete file or symbol tells an agent where to work; the reason for the "
+                "request tells it what trade-off to preserve when the literal instruction is "
+                "underspecified. This is a general prompting principle, documented explicitly "
+                "by Anthropic and consistent with agentic coding workflows: motivation helps "
+                "the agent generalize correctly to adjacent cases."
+            ),
+            action=(
+                "When the reason affects the solution, add one short clause: 'because <user/"
+                "system consequence>', 'so that <outcome>', or 'in order to <goal>'. Do not "
+                "pad routine requests with a synthetic rationale; this is useful context, not "
+                "a verbosity target."
+            ),
+            confidence=_confidence(n_total),
+        ))
+
+    # ------------------------------------------------------------------
+    # 4. Correction / rework rate
     # ------------------------------------------------------------------
     if agg.correction_rate > 0.10:
         recs.append(Recommendation(
@@ -236,7 +280,8 @@ def build_recommendations(agg: Aggregate, installed_skills: list[dict]) -> list[
             evidence=(
                 f"{agg.correction_rate:.0%} of your {n_total} turns match a correction/redo pattern "
                 f"(n={round(agg.correction_rate*n_total)}) — phrases like 'that's wrong', 'still "
-                "broken', 'try again', 'revert'. Each such turn represents at least one prior "
+                "broken', 'try again', or 'revert that'. Bare commands such as 'revert commit "
+                "abc123' are excluded. Each such turn represents at least one prior "
                 "turn whose output did not match intent on the first attempt."
             ),
             mechanism=(
@@ -254,7 +299,7 @@ def build_recommendations(agg: Aggregate, installed_skills: list[dict]) -> list[
         ))
 
     # ------------------------------------------------------------------
-    # 4. Acceptance criteria
+    # 5. Acceptance criteria
     # ------------------------------------------------------------------
     if agg.acceptance_rate < 0.30:
         recs.append(Recommendation(
@@ -285,7 +330,7 @@ def build_recommendations(agg: Aggregate, installed_skills: list[dict]) -> list[
         ))
 
     # ------------------------------------------------------------------
-    # 5. Prompt length — too short
+    # 6. Prompt length — too short
     # ------------------------------------------------------------------
     if agg.avg_word_count < 6:
         recs.append(Recommendation(
@@ -328,14 +373,14 @@ def build_recommendations(agg: Aggregate, installed_skills: list[dict]) -> list[
         ))
 
     # ------------------------------------------------------------------
-    # 6. Bundled multi-asks
+    # 7. Bundled multi-asks
     # ------------------------------------------------------------------
     if agg.multi_ask_rate > 0.30:
         ev = _segment_sentence(cs.get("correction_by_multi_ask", {}), "correction_rate",
                                 "correction rate on bundled (2+ verb) turns", "correction rate on single-focus turns")
         recs.append(Recommendation(
             id="split-multi-asks",
-            title="Split bundled multi-part requests into separate turns",
+            title="Structure bundled multi-part requests into independently checkable steps",
             axis="structure",
             metric_key="multi_ask_rate",
             current_value=agg.multi_ask_rate,
@@ -356,7 +401,7 @@ def build_recommendations(agg: Aggregate, installed_skills: list[dict]) -> list[
         ))
 
     # ------------------------------------------------------------------
-    # 7. Clarification loops
+    # 8. Clarification loops
     # ------------------------------------------------------------------
     if agg.clarification_rate > 0.08:
         ev = _segment_sentence(cs.get("clarification_by_short", {}), "clarification_rate",
