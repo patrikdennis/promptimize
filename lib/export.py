@@ -39,11 +39,19 @@ def build_export_payload(
     run_id: int | None,
     generated_at: str,
     tool_version: str = "1.0",
+    skill_progress: dict | None = None,
+    total_level: int | None = None,
+    prompt_level: int | None = None,
 ) -> dict:
     """Builds the full structured export payload. Intentionally excludes any
     raw prompt/reply text -- only aggregate rates, scores, and derived
-    statistics are exported, so this file is safe to share for team rollups."""
-    return {
+    statistics are exported, so this file is safe to share for team rollups.
+
+    `skill_progress`/`total_level`/`prompt_level` (from `lib/skills.py`) are
+    included so this JSON also doubles as the input to the opt-in "Hiscores"
+    comparison (`bin/hiscores.py`): only numeric levels/XP are exported, no
+    raw text, same as the rest of this payload."""
+    payload = {
         "schema_version": 1,
         "tool_version": tool_version,
         "generated_at": generated_at,
@@ -64,6 +72,16 @@ def build_export_payload(
         "anomalies": [_to_jsonable(a) for a in anomalies],
         "mahalanobis": _to_jsonable(mahalanobis_result) if mahalanobis_result else None,
     }
+    if skill_progress is not None:
+        payload["skills"] = {
+            "total_level": total_level,
+            "prompt_level": prompt_level,
+            "skills": {
+                key: {"xp": sp.xp, "level": sp.level, "is_maxed": sp.is_maxed}
+                for key, sp in skill_progress.items()
+            },
+        }
+    return payload
 
 
 def write_run_exports(out_path_base: Path, payload: dict) -> tuple[Path, Path]:
@@ -98,6 +116,13 @@ def write_run_exports(out_path_base: Path, payload: dict) -> tuple[Path, Path]:
         rows.append(("advanced", "euclidean_distance", payload["mahalanobis"]["euclidean_distance"]))
     for a in payload["anomalies"]:
         rows.append((f"anomaly_{a['status']}", a["metric_key"], a["z_score"]))
+
+    if payload.get("skills"):
+        rows.append(("skill_level", "total_level", payload["skills"]["total_level"]))
+        rows.append(("skill_level", "prompt_level", payload["skills"]["prompt_level"]))
+        for key, s in payload["skills"]["skills"].items():
+            rows.append(("skill_xp", key, s["xp"]))
+            rows.append(("skill_level", key, s["level"]))
 
     with csv_path.open("w", newline="") as f:
         writer = csv.writer(f)
