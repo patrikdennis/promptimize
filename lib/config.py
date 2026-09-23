@@ -22,13 +22,15 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
 DEFAULTS = {
     "scoring": {
-        "specificity": {"vague_weight": 0.55, "length_weight": 0.45, "ideal_length_min": 6, "ideal_length_max": 60},
-        "structure": {"verb_weight": 0.40, "acceptance_weight": 0.35, "multi_ask_weight": 0.25},
+        "specificity": {"vague_weight": 0.55, "length_weight": 0.45, "ideal_length_min": 6},
+        "context": {"anchor_weight": 0.65, "rationale_weight": 0.35},
+        "structure": {"steps_weight": 0.40, "acceptance_weight": 0.35, "multi_ask_weight": 0.25},
         "efficiency": {"correction_weight": 0.50, "clarification_weight": 0.25, "restatement_weight": 0.25},
     },
     "objective_thresholds": {
         "vague_rate": {"direction": "lower", "healthy": 0.08},
         "file_ref_rate": {"direction": "higher", "healthy": 0.55},
+        "rationale_rate": {"direction": "higher", "healthy": 0.25},
         "correction_rate": {"direction": "lower", "healthy": 0.08},
         "acceptance_rate": {"direction": "higher", "healthy": 0.35},
         "multi_ask_rate": {"direction": "lower", "healthy": 0.20},
@@ -62,6 +64,25 @@ DEFAULTS = {
     "team_mode": {
         "anonymize_labels": True,
         "min_users_for_aggregate": 2,
+    },
+    "skills": {
+        "xp_per_qualifying_turn": 10,
+        "vocabulary_xp_per_new_word": 2,
+        "vocabulary_xp_cap_per_turn": 20,
+        "xp_curve": {
+            "base": 300,
+            "growth_divisor": 7,
+            "scale_divisor": 300,
+        },
+        "prompt_level_weights": {
+            "specificity": 0.20,
+            "context_anchoring": 0.20,
+            "structure_acceptance": 0.15,
+            "efficiency": 0.20,
+            "clarity": 0.10,
+            "context_retention": 0.10,
+            "vocabulary": 0.05,
+        },
     },
 }
 
