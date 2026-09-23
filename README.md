@@ -40,7 +40,7 @@ Plotly via CDN for charts — open in any browser).
 The report is organized into tabs:
 
 - **Overview** — overall 0-100 score, the 4 axis scores (specificity,
-  context anchoring, structure/acceptance criteria, efficiency), a **3D
+  context & rationale, structure/acceptance criteria, efficiency), a **3D
   chart** plotting your current position against the optimal point
   (100, 100, 100), and an explicit explanation of what that point means and
   why it's mathematically the ceiling of the score formulas (not an
@@ -78,10 +78,11 @@ The report is organized into tabs:
 ## How the scoring and evidence work
 
 All metrics are rule-based text-pattern matching over your own prompt *and*
-assistant-reply text (vague-language keywords, file/code references, action
-verbs, correction phrases, acceptance-criteria phrases, clarifying-question
-detection in replies, word-overlap between consecutive turns). Every
-recommendation states which of two evidentiary standards backs it:
+assistant-reply text (underspecified-language patterns, artifact references,
+motivation/rationale clauses, structured steps, correction phrases,
+acceptance criteria, clarifying-question detection in replies, and
+word-overlap between consecutive turns). Every recommendation states which
+of two evidentiary standards backs it:
 
 1. **Self-referential statistics** — a rate or segmented comparison computed
    directly from your own transcript data, with a sample size and a
@@ -97,6 +98,47 @@ Treat scores as a directional signal for reflection, not a precise
 measurement. Tune the keyword lists and thresholds in `lib/metrics.py` and
 `lib/recommendations.py` if you want to adjust what counts.
 
+### Cross-agent principles, not vendor scoring rules
+
+Promptimize is deliberately **agent-agnostic**. Its scored defaults retain
+only principles that overlap in the current official Claude and GitHub
+Copilot guidance and that can be measured with reasonable precision from a
+local transcript:
+
+| Principle | How Promptimize measures it |
+| --- | --- |
+| Be clear and specific | A low vague-language rate; tentative language such as “I think” or “maybe” is only counted when it lacks a concrete anchor. |
+| Give the agent relevant context | The Context axis combines concrete artifact references (file/path/code) with stated motivation/rationale (“because”, “so that”, “in order to”). |
+| State constraints and acceptance criteria | Acceptance-criteria rate detects verification conditions, preserved behavior, tests, and explicit output expectations. |
+| Make multi-part work checkable | Structure rewards 2+ numbered/bulleted steps, not merely the presence or position of verbs such as “fix” or “implement”. |
+| Use enough detail | Six words is a minimum-information floor, **not** a maximum. A 150-word request receives full length credit when its added content is useful. |
+| Validate and iterate | Correction/clarification metrics track observed rework, while recommendations encourage explicit checks. |
+
+The defaults intentionally **do not score** provider- or surface-specific
+tactics: Claude XML tags, a named role/persona, hidden thinking/reasoning
+settings, Copilot IDE participants/keywords, which editor files happen to
+be open, or a particular model’s tool-use syntax. Those can be valuable in
+their respective products, but treating them as universal quality signals
+would make this tool less portable and would be unreliable to infer from
+exported local transcripts. Likewise, the tool does not award arbitrary
+points for “starting with a verb.”
+
+The source material used for the cross-agent baseline is:
+
+- Anthropic, [Prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices):
+  clarity, motivation/rationale, examples, structured instructions, plus
+  model-specific guidance that is intentionally not generalized here.
+- GitHub, [Prompt engineering for GitHub Copilot Chat](https://docs.github.com/en/copilot/concepts/prompting/prompt-engineering):
+  goal plus requirements, examples, decomposition, avoiding ambiguity,
+  relevant code, and relevant chat history.
+- GitHub, [Best practices for using GitHub Copilot](https://docs.github.com/en/copilot/get-started/best-practices):
+  task suitability, relevant context, iteration, and validating suggested
+  code.
+
+These sources are design inputs, not external performance benchmarks. The
+report continues to ground its quantitative claims in your own transcript
+statistics and labels all heuristic limitations explicitly.
+
 ## Progress tracking across runs
 
 Each run is appended to a local SQLite database at `data/history.db`. The
@@ -105,6 +147,15 @@ value; the *next* run evaluates each objective's current value against that
 baseline and against a healthy reference threshold, and reports the result
 in the Progress Over Time tab. This is what turns the tool from a one-off
 report into a closed feedback loop for gradually improving your prompting.
+
+Scores and objectives are compared only within the same **scoring-model
+version**. When metric definitions change materially (as in the Context &
+rationale update: revised vagueness/correction detection, no maximum prompt
+length, and structured steps replacing verb presence), Promptimize begins a
+fresh comparable baseline rather than presenting an apples-to-oranges delta.
+Older local rows remain in the database untouched; they are simply excluded
+from score trends, anomaly baselines, and objective comparisons for the new
+model.
 
 ## Configuration
 
@@ -143,12 +194,13 @@ Every run writes, alongside the HTML report in `out/`:
 
 - `report-<timestamp>.json` — the full structured payload (scores, metric
   values, conditional/evidence stats, advanced-metrics results, anomaly
-  flags, Mahalanobis result) with **no raw prompt or reply text**, so it is
-  safe to share or hand to a downstream aggregator.
+  flags, Mahalanobis result, Leveling levels/XP) with **no raw prompt or
+  reply text**, so it is safe to share or hand to a downstream aggregator.
 - `report-<timestamp>.csv` — the same data flattened to
   `category,metric,value` rows for quick spreadsheet analysis.
 
-These exports are also the input format for team/aggregate mode below.
+These exports are also the input format for team/aggregate mode and the
+Hiscores comparison below.
 
 ## Team / aggregate mode
 
@@ -166,15 +218,63 @@ exports are supplied, to avoid trivially de-anonymizing a single person.
 python3 ~/Documents/prompt-optimizer/bin/aggregate_team.py out/*.json --open
 ```
 
+## Leveling and Hiscores
+
+The report's **Leveling** tab turns the same per-turn signals used elsewhere
+into a persistent, classic MMO-style skill/XP/level system:
+
+- **7 skills** — Specificity, Artifact Grounding, Structure & Acceptance
+  Criteria, Efficiency, Clarity, Context Retention, and Vocabulary — each
+  with an explicit, inspectable per-turn XP condition (`lib/skills.py`).
+  Six are a simple boolean rule reusing an existing `TurnFeatures` field
+  (e.g. Efficiency earns XP for a turn that is *not* itself a correction);
+  Vocabulary earns XP incrementally per genuinely new distinct significant
+  word contributed across your entire history — an online analogue of the
+  Heaps' law vocabulary-growth curve in Advanced Analytics (Appendix A.5).
+- **Levels 1–99** on a curve shaped like a classic MMO skilling XP table
+  (slow grind to reach the top), but rescaled so the early/mid levels are
+  reachable within weeks of normal usage instead of requiring an
+  unreasonably large grind. See Appendix B for the full derivation.
+- **Total level** — the sum of all 7 skill levels (max 693).
+- **Prompt Level** — a single weighted-average composite across the 7 skill
+  levels (`config.yaml` → `skills.prompt_level_weights`), analogous to a
+  combat level: one number summarizing overall prompting proficiency.
+- **No double-counting.** Every turn is keyed by `(agent, session_id,
+  turn_index)` in a local `seen_turns` ledger (`lib/history.py`), so
+  re-running this tool on an overlapping period (e.g. "this week" after
+  already running "last 30 days") never awards the same turn's XP twice —
+  XP is monotonic and cumulative across every run, forever.
+
+`bin/hiscores.py` is an **opt-in, additive** companion to
+`bin/aggregate_team.py` (not a replacement — run either, both, or neither):
+it ranks multiple people's exported JSON files by Total level and Prompt
+Level in a Hiscores-style table. Since every export is produced by the exact
+same deterministic XP rules and level curve, levels are directly comparable
+across people even though there is no live/centralized server involved — you
+collect everyone's exported JSON yourselves (a shared folder, a Slack
+thread, whatever works for your team) and run this script locally, exactly
+the same opt-in pattern as `aggregate_team.py`. Anonymization and the
+minimum-contributor-count guard are shared with team mode
+(`team_mode.anonymize_labels`, `team_mode.min_users_for_aggregate`).
+
+```bash
+python3 ~/Documents/prompt-optimizer/bin/hiscores.py out/*.json --open
+```
+
+This is a point-in-time snapshot, not a live leaderboard: to see movement
+over time, periodically re-collect fresh exports and re-run the script.
+
 ## Project layout
 
 ```text
 bin/analyze.py              CLI entry point (period parsing, orchestration)
 bin/aggregate_team.py       Anonymized team/aggregate report from exported JSON files
+bin/hiscores.py              Opt-in Hiscores ranking (Total level / Prompt Level) from exported JSON files
 lib/backends.py              Reads + normalizes Copilot CLI / Claude Code history into sessions/turns
 lib/metrics.py               Turn-level feature extraction, aggregate stats, scoring, metric definitions
 lib/recommendations.py       Evidence-backed recommendation engine + skill discovery
-lib/history.py                Persistent run history + objective tracking (SQLite)
+lib/history.py                Persistent run history + objective tracking + Leveling XP ledger (SQLite)
+lib/skills.py                 Leveling: 7-skill XP rules, XP/level curve, Total level, Prompt Level (Appendix B)
 lib/report.py                 Self-contained multi-tab HTML report renderer (Plotly)
 lib/advanced_metrics.py       Markov/winding/burstiness/compression/Heaps' law (see Appendix A)
 lib/mahalanobis.py            Covariance-shrinkage Mahalanobis distance to optimal (Appendix A.6)
@@ -186,7 +286,7 @@ config.yaml                   Editable thresholds/weights (see Configuration abo
 skill/SKILL.md                The skill definition, symlinked into both agents
 data/history.db                Local run-history database (created on first run)
 out/                            Generated reports (HTML + JSON + CSV) land here
-tests/                          Pytest suite covering config, math, and scoring logic
+tests/                          Pytest suite covering config, math, scoring, and Leveling logic
 ```
 
 ## Installing the skill (already done for you)
@@ -440,7 +540,7 @@ templated language relative to corpus length.
 ### A.6 Covariance-shrinkage Mahalanobis distance to the optimal point
 
 Let $\mathbf{x} = (s_1, s_2, s_3, s_4)$ be the current run's four axis
-scores (specificity, context anchoring, structure, efficiency) and
+scores (specificity, context & rationale, structure, efficiency) and
 $\boldsymbol{\mu}_{\text{opt}} = (100, 100, 100, 100)$ the optimal corner
 (the provable ceiling of the scoring formulas — see the Methodology tab).
 A naive Euclidean distance $\lVert \mathbf{x} - \boldsymbol{\mu}_{\text{opt}}
@@ -528,3 +628,110 @@ regression. This is a two-sided within-subject control-chart approach
 control limits), applied per-user so that "normal" is always calibrated to
 that person's own historical variability rather than a fixed universal
 cutoff.
+
+### Appendix B: the Leveling XP curve and per-skill formulas
+
+**Level curve.** A well-known skilling-game XP-to-level table is built from
+a closed step formula (level $n \to n+1$):
+
+$$\Delta_{\text{ref}}(n) = \left\lfloor n + 300 \cdot 2^{n/7} \right\rfloor,
+\qquad
+\text{XP}_{\text{ref}}(L) = \left\lfloor \frac{1}{4}
+\sum_{n=1}^{L-1} \Delta_{\text{ref}}(n) \right\rfloor$$
+
+which gives $\text{XP}_{\text{ref}}(99) = 13{,}034{,}431$ — deliberately
+enormous, since that design is built around thousands of hours of sustained
+play. That volume is meaningless for a personal prompting tool: nobody
+issues 13 million qualifying LLM turns. `lib/skills.py` reuses the exact
+same functional shape (the geometric term $2^{n/\text{growth}}$ is what
+produces "fast early levels, punishing late levels"), but replaces the
+fixed divisor of 4 with a config-driven `scale_divisor`:
+
+$$\Delta(n) = \left\lfloor n + \text{base} \cdot 2^{n/\text{growth}}
+\right\rfloor, \qquad
+\text{XP}(L) = \left\lfloor \frac{1}{\text{scale\_divisor}}
+\sum_{n=1}^{L-1} \Delta(n) \right\rfloor$$
+
+With the shipped defaults (`base=300`, `growth=7`, `scale_divisor=300` — a
+divisor $75\times$ larger than the reference curve's), $\text{XP}(99)
+\approx 173{,}792$, about $1/75$ of the reference total, while
+$\text{XP}(50) \approx 1{,}351$ and $\text{XP}(70) \approx 9{,}835$. At
+`skills.xp_per_qualifying_turn = 10` XP per qualifying turn, a moderately
+active user (roughly 10–15 qualifying turns/day per skill) reaches level
+40–50 in a few weeks and level 70 within a few months, while level 99
+remains a genuine, multi-year aspirational target for a heavy, sustained
+user — the same "fast start, rare summit" shape that reference curve is
+known for, rescaled to a realistic personal-usage volume. All three
+constants are editable in `config.yaml` → `skills.xp_curve` if you want a
+faster or slower curve.
+
+**Per-skill XP rules.** Six of the seven skills award a fixed
+`xp_per_qualifying_turn` (default 10) whenever their boolean condition is
+true for a newly-seen turn — each condition is a direct reuse of a
+`TurnFeatures` field already computed for the 4 axis scores (see
+`lib/skills.py::_CONDITIONS`), so a skill's XP rate is exactly as
+inspectable as the axis scores it's derived from:
+
+| Skill | Condition (per turn) |
+|---|---|
+| Specificity | `vague_hits == 0` and `word_count ≥ ideal_length_min` |
+| Artifact Grounding | `has_file_ref` or `has_code_ref` |
+| Structure & Acceptance Criteria | `acceptance_signal` |
+| Efficiency | `not correction_signal` |
+| Clarity | `not clarification_signal` |
+| Context Retention | `restatement_eligible` and `not context_restatement` |
+
+**Vocabulary** is the one skill that isn't a per-turn boolean: it is
+computed as an *online/incremental* analogue of the Heaps' law
+vocabulary-growth curve used in Advanced Analytics (Appendix A.5). Heaps'
+law describes vocabulary size as a batch power-law fit, $V(n) = K \cdot
+n^\beta$, over an entire corpus; the Vocabulary skill instead tracks, per
+turn, how many of that turn's significant words (length $\ge 4$, filtered
+against a small stopword list — the same style of filter as
+`metrics._significant_words`) have *never appeared before in your entire
+history*, using a persistent `seen_vocabulary` table so membership is exact
+and doesn't require re-scanning your whole corpus on every run:
+
+$$\text{XP}_{\text{vocab}}(\text{turn}) = \min\!\big(w_{\text{new}},\,
+\text{cap}\big) \cdot \text{xp\_per\_new\_word}$$
+
+where $w_{\text{new}}$ is the count of genuinely novel distinct words in
+that turn and `cap` (default 20) bounds any single turn's contribution so
+one unusually long or copy-pasted message can't dominate the skill. Because
+new-word rate necessarily decays as your personal vocabulary saturates
+(exactly the mechanism Heaps' law formalizes for a whole corpus), this
+skill is expected to level up quickly at first and then slow — a built-in,
+emergent expression of the same $\beta < 1$ sublinear-growth phenomenon
+Appendix A.5 fits explicitly, just observed incrementally turn-by-turn
+instead of fit in one batch regression.
+
+**Total level and Prompt Level.** Total level is simply
+$\sum_{i=1}^{7} L_i$ (max $7 \times 99 = 693$), the same "Total level"
+convention used by classic MMO skilling systems. Prompt Level is a single
+composite,
+
+$$\text{PromptLevel} = \mathrm{round}\!\left(\frac{\sum_{i=1}^{7}
+w_i L_i}{\sum_{i=1}^{7} w_i}\right), \qquad \sum_i w_i = 1$$
+
+with weights in `config.yaml` → `skills.prompt_level_weights` (shipped
+defaults: Specificity 0.20, Artifact Grounding 0.20, Structure & Acceptance
+0.15, Efficiency 0.20, Clarity 0.10, Context Retention 0.10, Vocabulary
+0.05 — Vocabulary is weighted lowest since it is the most indirect/gameable
+of the seven, while the three skills most tied to concrete, evidence-linked
+axis scores in the rest of this report — Specificity, Artifact Grounding,
+Efficiency — are weighted highest). This is deliberately analogous to a
+"combat level": a single number for at-a-glance comparison (including in
+the opt-in Hiscores comparison — see "Leveling and Hiscores" above), while
+the seven individual skill levels remain available for anyone who wants the
+detail behind that number.
+
+**Non-double-counting guarantee.** Every turn is uniquely identified by
+$(\text{agent}, \text{session\_id}, \text{turn\_index})$ and recorded in a
+`seen_turns` table the first time its XP is awarded (`lib/history.py::
+award_skill_xp_for_new_turns`). Re-analyzing a period that overlaps
+previously-analyzed turns (e.g. running "this week" after having already
+run "last 30 days") looks up each turn against this table and skips XP
+award for any turn already present — so cumulative XP is a true,
+monotonic, run-count-independent function of *distinct turns ever
+analyzed*, not of how many times or in how many overlapping windows they've
+been analyzed.

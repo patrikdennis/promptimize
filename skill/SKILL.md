@@ -16,7 +16,7 @@ checked out — it reads **your own local prompt history** directly from disk:
 All of the actual logic (data loading, normalization, scoring, chart/report
 generation) lives in a standalone tool at:
 
-```
+```text
 ~/Documents/prompt-optimizer/bin/analyze.py
 ```
 
@@ -42,11 +42,14 @@ Nothing here should be re-implemented inline — just invoke that script.
    `~/Documents/prompt-optimizer/out/report-<timestamp>.html`). Each run is
    also recorded to `~/Documents/prompt-optimizer/data/history.db`, so
    running this repeatedly over time builds a progress trend and evaluates
-   whether the previous report's top objectives were met.
+   whether the previous report's top objectives were met. Progress is only
+   compared within the same scoring-model version; a material formula update
+   intentionally starts a fresh comparable baseline rather than showing a
+   misleading before/after delta.
 4. Open the report for the user (e.g. `open <path>` on macOS) and summarize
    in chat:
-   - The overall score and the 4 axis scores (specificity, context
-     anchoring, structure/acceptance criteria, efficiency).
+   - The overall score and the 4 axis scores (specificity, context &
+     rationale, structure/acceptance criteria, efficiency).
    - Whether this run's score improved, regressed, or held steady versus
      the previous run, and which of the previous run's tracked objectives
      were achieved/improving/regressed (see the report's "Progress Over
@@ -87,6 +90,12 @@ user is asking about:
   complexity proxy, and a Heaps' law vocabulary-growth fit — see README
   Appendix A for full derivations.
 - **Skills & Capabilities**: installed personal skills and suggested gaps.
+- **Leveling**: a classic MMO-style skill/XP/level system built from the same
+  per-turn signals — 7 skills, each levels 1-99, plus a Total level (sum)
+  and a single composite Prompt Level (weighted average). XP accrues
+  permanently across every run and is never double-counted for a turn
+  already analyzed in a prior run (see README "Leveling and Hiscores" +
+  Appendix B).
 - **Methodology**: exact formula for every axis and metric, plus the
   evidentiary standard used (self-referential statistics vs. structural
   reasoning about LLM context processing) and stated limitations.
@@ -100,8 +109,10 @@ user is asking about:
   habits.
 - Requires only Python 3 stdlib — no pip install needed. Every run also
   writes a machine-readable JSON + CSV export next to the HTML report
-  (containing no raw prompt/reply text); `bin/aggregate_team.py` can turn
-  several people's exports into one anonymized team-level report.
+  (containing no raw prompt/reply text, but now including Leveling
+  levels/XP); `bin/aggregate_team.py` can turn several people's exports into
+  one anonymized team-level report, and `bin/hiscores.py` (opt-in, additive
+  to that) ranks the same kind of exports by Total level / Prompt Level.
 - `config.yaml` at the repo root controls every scoring weight, threshold,
   and sample-size cutoff used by the tool — mention it if the user wants to
   retune anything rather than treating the numbers as fixed.
